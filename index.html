@@ -135,7 +135,7 @@ public java.util.concurrent.Future&lt;GetItemResult&gt;
         </section>
         <section>
           <section>
-            <h2>Bonus</h2>
+            <h2>Integration</h2>
             <pre
               data-id="code"
             ><code class="scala" style="max-height: 600px;">def getItem(ddbClient: DynamoDbAsyncClient, 
@@ -148,7 +148,7 @@ public java.util.concurrent.Future&lt;GetItemResult&gt;
    }</code></pre>
           </section>
           <section>
-            <h2>Bonus</h2>
+            <h2>Integration</h2>
             <pre
               data-id="code"
             ><code class="scala" style="max-height: 600px;">def fromJavaFuture[A](cf: CompletableFuture[A]): IO[A] =
@@ -168,6 +168,10 @@ public java.util.concurrent.Future&lt;GetItemResult&gt;
       }
       IO(cf.cancel(true)).map(_ => ())
     }</code></pre>
+          </section>
+          <section>
+            <h2>Success</h2>
+            <img src="./dd-after.png" height="400" width="600" />
           </section>
         </section>
       </div>
