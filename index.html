@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+
+    <title>A tale of Blocking IO</title>
+
+    <link rel="stylesheet" href="dist/reset.css" />
+    <link rel="stylesheet" href="dist/reveal.css" />
+    <link rel="stylesheet" href="dist/theme/solarized.css" id="theme" />
+    <link rel="stylesheet" href="dist/font-override.css" />
+    <!-- Theme used for syntax highlighted code -->
+    <link
+      rel="stylesheet"
+      href="plugin/highlight/solarized-light.css"
+      id="highlight-theme"
+    />
+  </head>
+  <body>
+    <div class="reveal">
+      <div class="slides">
+        <section>
+          <h2>A tale of blocking IO</h2>
+          <p>
+            Martin Lechner - 24.07.2020
+          </p>
+        </section>
+
+        <section>
+          <section>
+            <h2>problem statement</h2>
+            <img src="./dd-before.png" height="400" width="600" />
+            <aside class="notes">
+              Service became unresponsive + high latency under load
+            </aside>
+          </section>
+          <section>
+            <h2>Setup</h2>
+            <ul>
+              <li>Scala Service - Infinity</li>
+              <li>Dynamodb - Scanamo Library (uses aws-sdk v1)</li>
+              <li>Traffic levels of detail page</li>
+              <li>Service IO bound (no complex processing)</li>
+            </ul>
+          </section>
+          <section>
+            <h2>Analysis</h2>
+            <img src="threads.png" height="400" width="800" />
+            <aside class="notes">
+              go live on friday!
+            </aside>
+          </section>
+          <section>
+            <h2>AWS DDB Client</h2>
+            <pre data-id="code"><code class="java" data-trim>
+				public static final int DEFAULT_MAX_CONNECTIONS = 50
+			</code></pre>
+            <aside class="notes">
+              Compare to thread pool, Performance depends on thread pool size
+              Why?
+            </aside>
+          </section>
+        </section>
+        <section>
+          <section>
+            <h2>AWS-SDK v1 code snippets</h2>
+            <pre data-id="code"><code class="java" data-trim>
+// AwsAsyncClientBuilder.java
+import java.util.concurrent.ExecutorService;
+private ExecutorService defaultExecutor() {
+  return Executors.newFixedThreadPool(
+	  getClientConfiguration().getMaxConnections());
+}
+
+// constructor
+this.executorService = asyncClientParams.getExecutor();
+
+// DynamoDBAsyncClient.java
+public java.util.concurrent.Future&lt;GetItemResult&gt; 
+  getItemAsync(GetItemRequest request)
+		  </code></pre>
+            <aside class="notes">
+              Blocking IO (Threadpool), if you call future.get() this blocks
+              until it's resolved or failed
+            </aside>
+          </section>
+          <section>
+            <h2>tracing it to the core</h2>
+            <pre data-id="code"><code class="java">
+    return executorService.submit(
+      new java.util.concurrent.Callable&lt;GetItemResult&gt;() {
+        @Override
+        public GetItemResult call() throws Exception {
+            GetItemResult result = null;
+
+            try {
+                // Sync IO!!!
+                result = executeGetItem(finalRequest);
+            } catch (Exception ex) { ... }
+            return result;
+          }
+          </code></pre>
+          </section>
+          <section>
+            <h2>Problem revisited</h2>
+            <ul>
+              <li>
+                High Number of requests - More than threadpool could handle
+              </li>
+              <li>Requests wait for their execution - increased latency</li>
+              <li>Solution: Turn up thread pool?</li>
+              <li>Threads are resource heavy</li>
+            </ul>
+          </section>
+          <section>
+            <h2>Use aws-sdk v2!</h2>
+            <ul>
+              <li>Nonblocking IO based on Netty / java.nio2</li>
+              <li>Handles the load well by default</li>
+              <li>Lower resource usage</li>
+              <li>Scanamo will be released with v2 hopefully soon!</li>
+            </ul>
+          </section>
+          <section>
+            <h2>java.nio</h2>
+            <ul>
+              <li>Operating system low level I/O operations</li>
+              <li>High level api with OS complexity hidden</li>
+            </ul>
+          </section>
+        </section>
+        <section>
+          <section>
+            <h2>Bonus</h2>
+            <pre
+              data-id="code"
+            ><code class="scala" style="max-height: 600px;">def getItem(ddbClient: DynamoDbAsyncClient, 
+              request: GetItemRequest): IO[GetItemResponse] =
+  fromJavaFuture(ddbClient.getItem(request))
+    .handleErrorWith {
+      case e: DynamoDbException =>
+        IO.raiseError(DynamoDBError(e))
+    }
+   }</code></pre>
+          </section>
+          <section>
+            <h2>Bonus</h2>
+            <pre
+              data-id="code"
+            ><code class="scala" style="max-height: 600px;">def fromJavaFuture[A](cf: CompletableFuture[A]): IO[A] =
+    IO.cancelable { cb =>
+      cf.handle[Unit] { (result: A, err: Throwable) =>
+        err match {
+          case null =>
+            cb(Right(result))
+          case _: CancellationException =>
+            ()
+          case ex: CompletionException if ex.getCause
+            ne null =>
+            cb(Left(ex.getCause))
+          case ex =>
+            cb(Left(ex))
+        }
+      }
+      IO(cf.cancel(true)).map(_ => ())
+    }</code></pre>
+          </section>
+        </section>
+      </div>
+    </div>
+
+    <script src="dist/reveal.js"></script>
+    <script src="plugin/notes/notes.js"></script>
+    <script src="plugin/markdown/markdown.js"></script>
+    <script src="plugin/highlight/highlight.js"></script>
+    <script>
+      // More info about initialization & config:
+      // - https://revealjs.com/initialization/
+      // - https://revealjs.com/config/
+      Reveal.initialize({
+        hash: true,
+
+        // Learn about plugins: https://revealjs.com/plugins/
+        plugins: [RevealMarkdown, RevealHighlight, RevealNotes],
+      })
+    </script>
+  </body>
+</html>
