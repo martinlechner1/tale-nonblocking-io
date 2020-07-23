@@ -28,6 +28,7 @@
           <p>
             Martin Lechner - 24.07.2020
           </p>
+          <p>Lead Software Engineer at Monetization</p>
         </section>
 
         <section>
@@ -47,111 +48,188 @@
               <li>Service IO bound (no complex processing)</li>
             </ul>
           </section>
+        </section>
+
+        <section>
           <section>
-            <h2>Analysis</h2>
-            <img src="threads.png" height="400" width="800" />
-            <aside class="notes">
-              go live on friday!
-            </aside>
+            <h2>Scanamo</h2>
+            <pre data-id="code"><code class="scala" data-trim>
+            val client = DynamoDBAsyncClientBuilder.standard()
+            val table = Table[MyDomainEntity]("name")
+
+            ScanamoCats[IO].exec(client)(table.get('key -> "MyValue"))
+          </code></pre>
           </section>
           <section>
-            <h2>AWS DDB Client</h2>
-            <pre data-id="code"><code class="java" data-trim>
-				public static final int DEFAULT_MAX_CONNECTIONS = 50
-			</code></pre>
-            <aside class="notes">
-              Compare to thread pool, Performance depends on thread pool size
-              Why?
-            </aside>
+            <h2>Under the hood in scanamo</h2>
+            <pre
+              data-id="code"
+              style="width: 1000px; height: 450px;"
+            ><code class="scala" data-trim>
+import com.amazonaws.handlers.AsyncHandler
+
+final private def futureOf[X <: AmazonWebServiceRequest, T](
+  call: (X, AsyncHandler[X, T]) => java.util.concurrent.Future[T],
+  req: X
+): Future[T] = {
+  val p = Promise[T]()
+  val h = new AsyncHandler[X, T] {
+    def onError(exception: Exception): Unit = 
+      { p.complete(Failure(exception)); () }
+    def onSuccess(request: X, result: T): Unit = 
+      { p.complete(Success(result)); () }
+  }
+  call(req, h)
+  p.future
+}</code></pre>
+            <aside class="notes"></aside>
           </section>
         </section>
         <section>
           <section>
-            <h2>AWS-SDK v1 code snippets</h2>
+            <h2>AWS-SDK</h2>
             <pre data-id="code"><code class="java" data-trim>
-// AwsAsyncClientBuilder.java
+// DynamoDBAsyncClient.java
+public java.util.concurrent.Future&lt;GetItemResult&gt; 
+  getItemAsync(GetItemRequest request, 
+    AsyncHandler&lt;GetItemRequest, GetItemResult&gt; asyncHandler)
+		  </code></pre>
+            <aside class="notes">
+              Scanamo used aws sdk v1, Blocking IO (Threadpool), if you call
+              future.get() this blocks until it's resolved or failed
+            </aside>
+          </section>
+
+          <section>
+            <h2>tracing it to the core</h2>
+            <pre
+              data-id="code"
+              style="height: 550px;"
+            ><code class="java" >return executorService.submit(
+  new java.util.concurrent.Callable&lt;GetItemResult&gt;() {
+    @Override
+    public GetItemResult call() throws Exception {
+        GetItemResult result = null;
+
+        try {
+            // Sync IO!!!
+            result = executeGetItem(finalRequest);
+        } catch (Exception ex) { 
+          if (asyncHandler != null) {
+            asyncHandler.onError(ex);
+          }
+          throw ex;
+         }
+        if (asyncHandler != null) {
+            asyncHandler.onSuccess(finalRequest, result);
+        }
+        return result;
+      }
+    }</code></pre>
+          </section>
+          <section>
+            <pre data-id="code"><code class="java">// AwsAsyncClientBuilder.java
 import java.util.concurrent.ExecutorService;
 private ExecutorService defaultExecutor() {
   return Executors.newFixedThreadPool(
 	  getClientConfiguration().getMaxConnections());
 }
 
-// constructor
-this.executorService = asyncClientParams.getExecutor();
-
-// DynamoDBAsyncClient.java
-public java.util.concurrent.Future&lt;GetItemResult&gt; 
-  getItemAsync(GetItemRequest request)
-		  </code></pre>
-            <aside class="notes">
-              Blocking IO (Threadpool), if you call future.get() this blocks
-              until it's resolved or failed
-            </aside>
+// Configuration
+public static final int DEFAULT_MAX_CONNECTIONS = 50
+</code></pre>
           </section>
           <section>
-            <h2>tracing it to the core</h2>
-            <pre data-id="code"><code class="java">
-    return executorService.submit(
-      new java.util.concurrent.Callable&lt;GetItemResult&gt;() {
-        @Override
-        public GetItemResult call() throws Exception {
-            GetItemResult result = null;
-
-            try {
-                // Sync IO!!!
-                result = executeGetItem(finalRequest);
-            } catch (Exception ex) { ... }
-            return result;
-          }
-          </code></pre>
+            <img src="threads.png" height="400" width="800" />
+            <aside class="notes">
+              go live on friday!
+            </aside>
           </section>
+        </section>
+        <section>
           <section>
             <h2>Problem revisited</h2>
             <ul>
               <li>
-                High Number of requests - More than threadpool could handle
+                High Number of concurrent requests - More than threadpool could
+                handle
               </li>
-              <li>Requests wait for their execution - increased latency</li>
+              <li>
+                Requests wait for free thread - increased latency and timeouts
+              </li>
               <li>Solution: Turn up thread pool?</li>
-              <li>Threads are resource heavy</li>
+              <li>BUT: Threads are resource heavy</li>
+            </ul>
+          </section>
+          <section>
+            <h2>Non Blocking IO!</h2>
+            <ul>
+              <li>java.nio2</li>
+              <li>Operating system low level nonblocking I/O operations</li>
+              <li>High level api with OS complexity hidden</li>
             </ul>
           </section>
           <section>
             <h2>Use aws-sdk v2!</h2>
             <ul>
               <li>Nonblocking IO based on Netty / java.nio2</li>
-              <li>Handles the load well by default</li>
+              <li>Higher throughput</li>
               <li>Lower resource usage</li>
+              <li>Lower latencies</li>
               <li>Scanamo will be released with v2 hopefully soon!</li>
-            </ul>
-          </section>
-          <section>
-            <h2>java.nio</h2>
-            <ul>
-              <li>Operating system low level I/O operations</li>
-              <li>High level api with OS complexity hidden</li>
             </ul>
           </section>
         </section>
         <section>
+          <section>
+            <h2>Build.sbt</h2>
+            <pre
+              data-id="code"
+            ><code class="scala" style="max-height: 600px;">"software.amazon.awssdk" % "dynamodb" % "2.13.58",</code></pre>
+          </section>
+          <section>
+            <h2>Application Module</h2>
+            <pre
+              data-id="code"
+            ><code class="scala" style="max-height: 600px;">@Provides
+@Singleton
+def dynamoDbAsyncClientV2(): DynamoDbAsyncClient =
+  DynamoDbAsyncClient.builder
+    .region(Region.EU_WEST_1)
+    .httpClientBuilder(
+      NettyNioAsyncHttpClient.builder
+        .maxConcurrency(500)
+        .maxPendingConnectionAcquires(25000)
+    )
+    .build()</code></pre>
+          </section>
+
           <section>
             <h2>Integration</h2>
             <pre
               data-id="code"
             ><code class="scala" style="max-height: 600px;">def getItem(ddbClient: DynamoDbAsyncClient, 
               request: GetItemRequest): IO[GetItemResponse] =
-  fromJavaFuture(ddbClient.getItem(request))
-    .handleErrorWith {
-      case e: DynamoDbException =>
-        IO.raiseError(DynamoDBError(e))
-    }
-   }</code></pre>
+fromJavaFuture(ddbClient.getItem(request))</code></pre>
           </section>
+
           <section>
-            <h2>Integration</h2>
-            <pre
-              data-id="code"
-            ><code class="scala" style="max-height: 600px;">def fromJavaFuture[A](cf: CompletableFuture[A]): IO[A] =
+            <h2>Success</h2>
+            <img src="./dd-after.png" height="400" width="600" />
+          </section>
+        </section>
+        <section>
+          <h2>Thanks</h2>
+          <ul>
+            <li>DCS Team</li>
+            <li>All people who suggested solutions</li>
+          </ul>
+        </section>
+        <section>
+          <h2>Bonus</h2>
+          <pre
+            data-id="code"
+          ><code class="scala" style="max-height: 600px;">def fromJavaFuture[A](cf: CompletableFuture[A]): IO[A] =
     IO.cancelable { cb =>
       cf.handle[Unit] { (result: A, err: Throwable) =>
         err match {
@@ -168,11 +246,6 @@ public java.util.concurrent.Future&lt;GetItemResult&gt;
       }
       IO(cf.cancel(true)).map(_ => ())
     }</code></pre>
-          </section>
-          <section>
-            <h2>Success</h2>
-            <img src="./dd-after.png" height="400" width="600" />
-          </section>
         </section>
       </div>
     </div>
