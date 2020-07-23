@@ -112,7 +112,7 @@ public java.util.concurrent.Future&lt;GetItemResult&gt;
         GetItemResult result = null;
 
         try {
-            // Sync IO!!!
+            // Blocking IO!!!
             result = executeGetItem(finalRequest);
         } catch (Exception ex) { 
           if (asyncHandler != null) {
@@ -166,13 +166,13 @@ public static final int DEFAULT_MAX_CONNECTIONS = 50
             <ul>
               <li>java.nio2</li>
               <li>Operating system low level nonblocking I/O operations</li>
-              <li>High level api with OS complexity hidden</li>
+              <li>High level API with OS complexity hidden</li>
             </ul>
           </section>
           <section>
             <h2>Use aws-sdk v2!</h2>
             <ul>
-              <li>Nonblocking IO based on Netty / java.nio2</li>
+              <li>Non-blocking IO based on Netty / java.nio2</li>
               <li>Higher throughput</li>
               <li>Lower resource usage</li>
               <li>Lower latencies</li>
